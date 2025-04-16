@@ -12,7 +12,7 @@ export class TradeWinRateManger {
 
   updateTradeResult(isWin: boolean) {
     this.lastTradeResult = isWin;
-    this.isAllowToTrade = isWin;
+    this.isAllowToTrade = true;
 
     if (this.onTradeReach) {
       if (this.lastTradeResult !== this.previousTradeResult) {

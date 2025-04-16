@@ -14,19 +14,19 @@ import { convertTicksToCartesianDigits } from "./utils/convert-ticks";
 type TSymbol = (typeof symbols)[number];
 const symbols = ["R_100"] as const;
 
-const BALANCE_TO_START_TRADING = 200;
+const BALANCE_TO_START_TRADING = 600;
 const CONTRACT_SECONDS = 2;
 
 const config: MoneyManagementV2 = {
   type: "martingale",
-  initialStake: 10,
+  initialStake: 20,
   profitPercent: 92,
-  maxStake: 200,
+  maxStake: 600,
   maxLoss: 20,
   sorosLevel: 20,
   winsBeforeMartingale: 0,
   initialBalance: BALANCE_TO_START_TRADING,
-  targetProfit: 25,
+  targetProfit: 45,
 };
 
 const tradeConfig = {
@@ -58,8 +58,8 @@ const moneyManager = new MoneyManager(config, config.initialBalance);
 
 let retryToGetLastTradeCount = 0;
 
-// running every day at 21:00 - America/Sao_Paulo
-const task = schedule('0 21 * * *', async () => {
+// running every day at 09:00 - America/Sao_Paulo
+const task = schedule('0 9 * * *', async () => {
   if (!telegramManager.isRunningBot()) {
     await startBot();
   }
@@ -74,7 +74,7 @@ moneyManager.setOnTargetReached(async (profit, balance) => {
     `💰 Lucro: $${profit.toFixed(2)}\n` +
     `🎯 Meta: $${config.targetProfit}\n` +
     `💵 Saldo: $${balance.toFixed(2)}\n\n` +
-    `✨ Bot será reiniciado automaticamente amanhã às 21:00\n` +
+    `✨ Bot será reiniciado automaticamente amanhã às 09:00\n` +
     `🛑 Bot parado com sucesso!`;
 
   telegramManager.sendMessage(message);
