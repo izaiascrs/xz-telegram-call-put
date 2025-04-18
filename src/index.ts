@@ -383,7 +383,7 @@ const subscribeToTicks = (symbol: TSymbol) => {
   
         apiManager.augmentedSend("buy", {
           buy: "1",
-          price: 100,
+          price: 10000,
           parameters: {
             symbol,
             currency: "USD",
