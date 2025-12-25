@@ -9,24 +9,25 @@ import { TelegramManager } from "./telegram";
 import apiManager from "./ws";
 import { DERIV_TOKEN } from "./utils/constants";
 import { TradeWinRateManger } from "./utils/trade-win-rate-manager";
-import { convertTicksToCartesianDigits } from "./utils/convert-ticks";
+import { momentumPersistentStrategy } from "./utils/strategy";
 
 type TSymbol = (typeof symbols)[number];
 const symbols = ["R_100"] as const;
 
-const BALANCE_TO_START_TRADING = 600;
+const BALANCE_TO_START_TRADING = 100;
 const CONTRACT_SECONDS = 2;
 
 const config: MoneyManagementV2 = {
-  type: "martingale",
-  initialStake: 20,
-  profitPercent: 92,
-  maxStake: 600,
+  type: "fixed",
+  initialStake: 0.35,
+  profitPercent: 88,
+  maxStake: 100,
   maxLoss: 20,
   sorosLevel: 20,
   winsBeforeMartingale: 0,
   initialBalance: BALANCE_TO_START_TRADING,
-  targetProfit: 45,
+  targetProfit: 2,
+  targetStopLoss: 2,
 };
 
 const tradeConfig = {
@@ -58,8 +59,8 @@ const moneyManager = new MoneyManager(config, config.initialBalance);
 
 let retryToGetLastTradeCount = 0;
 
-// running every day at 09:00 - America/Sao_Paulo
-const task = schedule('0 9 * * *', async () => {
+// running every 2 hours
+const task = schedule('* */2 * * *', async () => {
   if (!telegramManager.isRunningBot()) {
     await startBot();
   }
@@ -74,7 +75,6 @@ moneyManager.setOnTargetReached(async (profit, balance) => {
     `💰 Lucro: $${profit.toFixed(2)}\n` +
     `🎯 Meta: $${config.targetProfit}\n` +
     `💵 Saldo: $${balance.toFixed(2)}\n\n` +
-    `✨ Bot será reiniciado automaticamente amanhã às 09:00\n` +
     `🛑 Bot parado com sucesso!`;
 
   telegramManager.sendMessage(message);
@@ -82,28 +82,18 @@ moneyManager.setOnTargetReached(async (profit, balance) => {
   telegramManager.setBotRunning(false);
 });
 
-tradeWinRateManager.setOnTradeReach((type) => {
-  let message = "";
-
-  if(type === "win") {
-    message = `🎯 **Última Trade**: Ganhou!\n` +    
-    `✨ **Entrando em modo de trade real!**`;
-  } else {
-    message = `🎯 **Última Trade**: Perdeu!\n` +
-    `⚠️ **Entrando em modo de trade virtual!**`;
-  }
-
+moneyManager.setOnStopLossReached(async (loss, balance) => {
+  const message = `🛑 Stop loss atingido!\n\n` +
+    `💵 Saldo: $${balance.toFixed(2)}\n` +
+    `💰 Prejuízo: $${loss.toFixed(2)}\n` +
+    `🎯 Meta: $${config.targetStopLoss}\n` +
+    `🛑 Bot parado com sucesso!`;
   telegramManager.sendMessage(message);
-})
+  await stopBot();
+  telegramManager.setBotRunning(false);
+});
 
 const ticksMap = new Map<TSymbol, number[]>([]);
-
-
-function checkPattern(digits: number[]) {
-  const lastDigit = digits.at(-1);
-  const secondLastDigit = digits.at(-2);
-  return secondLastDigit === -9 && lastDigit === -2;
-}
 
 function createTradeTimeout() {
   clearTradeTimeout();
@@ -181,9 +171,6 @@ function handleTradeResult({
   }).catch(err => console.error('Erro ao salvar trade:', err));
 
   clearTradeTimeout();
-
-
-  tradeWinRateManager.updateTradeResult(isWin);
 
 }
 
@@ -307,12 +294,12 @@ const subscribeToTicks = (symbol: TSymbol) => {
   const ticksStream = apiManager.augmentedSubscribe("ticks_history", {
     ticks_history: symbol,
     end: "latest",
-    count: 21 as unknown as undefined,
+    // @ts-ignore
+    count: 50,
   });
 
-  const subscription = ticksStream.subscribe((data) => {
+  const subscription = ticksStream.subscribe(async (data) => {
     updateActivityTimestamp(); // Atualizar timestamp ao receber ticks
-    const pipSize = data?.pip_size ?? 2;
 
     if (!telegramManager.isRunningBot()) {
       subscription.unsubscribe();
@@ -335,7 +322,7 @@ const subscribeToTicks = (symbol: TSymbol) => {
       const tickData = data as TicksStreamResponse;
       const currentPrice = tickData.tick?.quote || 0;
       const prevTicks = ticksMap.get(symbol) || [];
-      if (prevTicks.length >= 20) {
+      if (prevTicks.length >= 50) {
         prevTicks.shift();
         prevTicks.push(currentPrice);
         ticksMap.set(symbol, prevTicks);
@@ -343,66 +330,102 @@ const subscribeToTicks = (symbol: TSymbol) => {
     }
 
     const currentTicks = ticksMap.get(symbol) || [];
-    const cartesianDigits = convertTicksToCartesianDigits(currentTicks, pipSize);
-    const lastTick = currentTicks[cartesianDigits.length - 1];
-    const isPattern = checkPattern(cartesianDigits);
-
     if (!isAuthorized || !telegramManager.isRunningBot()) return;
 
     if(isTrading) {
-      if(!tradeWinRateManager.canTrade()) {
-        tickCount++;
+      tickCount++;
 
-        if(tickCount >= tradeConfig.ticksCount + 1) {
-          const entryPrice = currentTicks.at(-11) ?? 0;
-          const isWin = lastTick >= entryPrice;
-          tradeWinRateManager.updateTradeResult(isWin);
-          
-          isTrading = false;
-          tickCount = 0;
-        }
+      if(tickCount >= tradeConfig.ticksCount + 1) {
+        isTrading = false;
+        tickCount = 0;
       }
 
       return;
     }
-    
-    if (isPattern) {
-      
-      if(tradeWinRateManager.canTrade()) {
-        let amount = moneyManager.calculateNextStake();
-  
-        if (!checkStakeAndBalance(amount)) {
-          stopBot();
-          return;
-        }
-  
-        telegramManager.sendMessage(
-          `🎯 Sinal identificado!\n` +
-            `💰 Valor da entrada: $${amount.toFixed(2)}`
-        );
-  
-        apiManager.augmentedSend("buy", {
-          buy: "1",
-          price: 100,
-          parameters: {
-            symbol,
-            currency: "USD",
-            basis: "stake",
-            duration: tradeConfig.ticksCount,
-            duration_unit: "t",
-            amount: Number(amount.toFixed(2)),
-            contract_type: "CALLE",
-          },
-        }).then((data) => {
-          const contractId = data.buy?.contract_id;
-          lastContractId = contractId;
-          createTradeTimeout();
-        }).catch(err => {
-          console.log("BUY CONTRACT ERROR", err);          
-        });
-      }
 
+    const momentumPersistent = momentumPersistentStrategy(currentTicks);
+    if(momentumPersistent.sinal === "HOLD") return;
+
+    if(telegramManager.getUseFilters()) {
+      const windowLength = 20;
+      const zonePerc = 0.007;
+      const lastTicks = [...currentTicks].slice(-windowLength);
+      if (lastTicks.length < windowLength) return;
+  
+      const max = Math.max(...lastTicks);
+      const min = Math.min(...lastTicks);
+      const avg = lastTicks.reduce((a, b) => a + b, 0) / lastTicks.length;
+      const priceRange = max - min;
+      const percRange = priceRange / avg;
+  
+      const topZone = max - priceRange * 0.10;
+      const bottomZone = min + priceRange * 0.10;
+  
+      let touchesHigh = 0, touchesLow = 0;
+      let upMoves = 0, downMoves = 0;
+      for (let i = 1; i < lastTicks.length; i++) {
+        if (lastTicks[i] > lastTicks[i-1]) upMoves++;
+        if (lastTicks[i] < lastTicks[i-1]) downMoves++;
+        if (lastTicks[i] >= topZone && lastTicks[i] < max + 1e-8) touchesHigh++;
+        if (lastTicks[i] <= bottomZone && lastTicks[i] > min - 1e-8) touchesLow++;
+      }
+  
+      const zigzag = upMoves > 4 && downMoves > 4;
+      const manyTouches = touchesHigh >= 2 && touchesLow >= 2;
+  
+      const superLateral =
+        percRange < zonePerc &&
+        manyTouches &&
+        zigzag &&
+        (lastTicks[lastTicks.length-1] <= max && lastTicks[lastTicks.length-1] >= min);
+  
+      if (superLateral) {
+        return;
+      }
+  
+      const last8Ticks = [...currentTicks].slice(-8);
+      const trashHold = 0.30;
+      const hasStrongMovement = last8Ticks.some((tick, i, array) => {
+        if(i === 0) return false;
+        const diff = tick - array[i-1];
+        return Math.abs(diff) > trashHold;
+      });
+  
+      if(hasStrongMovement) return;
+    }
+    
+    const amount = moneyManager.calculateNextStake();
+
+    if (!checkStakeAndBalance(amount)) {
+      stopBot();
+      return;
+    }
+
+    telegramManager.sendMessage(
+      `🎯 Sinal identificado!\n` +
+        `💰 Valor da entrada: $${amount.toFixed(2)}`
+    );
+
+    try {
+      const data = await apiManager.augmentedSend("buy", {
+        buy: "1",
+        price: 100,
+        parameters: {
+          symbol,
+          currency: "USD",
+          basis: "stake",
+          duration: tradeConfig.ticksCount,
+          duration_unit: "t",
+          amount: Number(amount.toFixed(2)),
+          contract_type: momentumPersistent.sinal === "CALL" ? "CALLE" : "PUTE",
+        },
+      });      
+      const contractId = data.buy?.contract_id;
+      lastContractId = contractId;
+      createTradeTimeout();
       isTrading = true;
+    } catch (err) {
+      console.log("BUY CONTRACT ERROR", err);          
     }
     
   }, (err) => {

@@ -9,6 +9,7 @@ export type MoneyManagementV2 = {
   sorosLevel?: number;
   winsBeforeMartingale?: number;
   targetProfit?: number;
+  targetStopLoss?: number;
   initialBalance: number;
 };
 

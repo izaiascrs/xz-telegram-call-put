@@ -14,6 +14,7 @@ export class TelegramManager {
   private startTime: Date | null = null;
   private trades: { win: number; loss: number } = { win: 0, loss: 0 };
   private balance: number = 0;
+  private useFilters: boolean = true;
 
   constructor(
     private tradeService: TradeService,
@@ -363,6 +364,19 @@ export class TelegramManager {
       this.bot.sendMessage(msg.chat.id, message, { parse_mode: "Markdown" });
     });
 
+    // toggle use filters
+    this.bot.onText(/\/toggleUseFilters/, (msg) => {
+      if (!this.isAuthorizedChat(msg.chat.id)) return;
+
+      if (!this.isAdminChat(msg.chat.id)) {
+        this.bot.sendMessage(msg.chat.id, "⛔ Apenas o administrador pode alterar o uso de filtros!");
+        return;
+      }
+
+      this.useFilters = !this.useFilters;
+      this.bot.sendMessage(msg.chat.id, `🔄 Filtros de uso alterados para: ${this.useFilters ? "🟢 Ativo" : "🔴 Inativo"}`);
+    });
+
   }
 
   private isAuthorizedChat(chatId: number): boolean {
@@ -445,5 +459,9 @@ export class TelegramManager {
     return showDate
       ? `${date} ${formattedStartHour}:00-${formattedEndHour}:00`
       : `${formattedStartHour}:00-${formattedEndHour}:00`;
+  }
+
+  public getUseFilters(): boolean {
+    return this.useFilters;
   }
 }

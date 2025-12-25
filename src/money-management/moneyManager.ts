@@ -15,7 +15,9 @@ export class MoneyManager {
   private isMartingaleTrade: boolean = false;
   private sessionProfit: number = 0;
   private accumulatedLosses: number = 0;
+  private targetStopLoss: number = 0;
   private onTargetReached?: (profit: number, balance: number) => void;
+  private onStopLossReached?: (loss: number, balance: number) => void;
 
   constructor(private config: MoneyManagementV2, initialBalance: number) {
     this.currentBalance = initialBalance;
@@ -23,6 +25,11 @@ export class MoneyManager {
     this.currentStake = config.initialStake;
     this.maxWinsRequired = config.winsBeforeMartingale || 3;
     this.currentWinsRequired = this.maxWinsRequired;
+    this.targetStopLoss = config.targetStopLoss || 0;
+  }
+
+  setOnStopLossReached(callback: (loss: number, balance: number) => void) {
+    this.onStopLossReached = callback;
   }
 
   setOnTargetReached(callback: (profit: number, balance: number) => void) {
@@ -99,6 +106,15 @@ export class MoneyManager {
         this.onTargetReached(this.sessionProfit, this.currentBalance);
       }
 
+      this.resetSession();
+    }
+
+    // Verifica se atingiu o stop loss
+    if (this.config.targetStopLoss && this.sessionProfit <= -this.config.targetStopLoss) {
+      console.log(`🛑 Stop loss de $${this.config.targetStopLoss} atingido! Reiniciando saldo...`);
+      if (this.onStopLossReached) {
+        this.onStopLossReached(-this.sessionProfit, this.currentBalance);
+      }
       this.resetSession();
     }
 
