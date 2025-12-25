@@ -60,7 +60,7 @@ const moneyManager = new MoneyManager(config, config.initialBalance);
 let retryToGetLastTradeCount = 0;
 
 // running every 2 hours
-const task = schedule('* */2 * * *', async () => {
+const task = schedule('0 */2 * * *', async () => {
   if (!telegramManager.isRunningBot()) {
     await startBot();
   }
@@ -509,7 +509,6 @@ let lastActivityTimestamp = Date.now();
 const updateActivityTimestamp = () => {
   lastActivityTimestamp = Date.now();
 };
-
 
 function main() {
   task.start();
